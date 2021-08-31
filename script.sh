@@ -19,27 +19,35 @@ if [[ $FSTYPE_LIST == *lxfs* || $FSTYPE_LIST == *wslfs* ]] ; then
     exit 1
 fi
 
+# debug
+echo "Command: ${@} ($$)" >> /boot/log
+if [[ "${@}" =~ "_debug" ]] ; then
+    exec bash
+fi
+
 # avoid first run
 if [[ -z "$(df | grep 'C:')" ]] ; then
     exec $(echo ${@} | sed 's#/sbin/#/usr/.bin/#g' | sed 's#^/usr/bin/#/usr/.bin/#g')
-fi 
-
-# debug
-if [[ "${@}" =~ "_debug" ]] ; then
-    exec bash
-fi 
+fi
 
 CONTAINER_PID=$(pgrep -xo systemd)
 
 # if the container daemon isn't running, run it.
-if [ "$CONTAINER_PID" = '' ] ; then
-    daemonize /usr/.bin/unshare --fork --pid --mount-proc /boot/init_wsl2/wsl2_isocond.sh
-    daemonize /boot/init_wsl2/syncbin.sh
+if [ "$CONTAINER_PID" = '' ] && [ ! -f /boot/lock ] ; then
+    echo "$$" > /boot/lock
+    # double check lock
+    if [ $(cat /boot/lock) == "$$" ] ; then
+        daemonize /usr/.bin/unshare --fork --pid --mount-proc /boot/init_wsl2/wsl2_isocond.sh
+        daemonize /boot/init_wsl2/syncbin.sh
+        rm -f /boot/lock
+    fi
 fi
 
 while [[ "${CONTAINER_PID}" = '' ]]; do
     CONTAINER_PID=$(pgrep -xo systemd)
     sleep 0.01
+    # avoid dead locks
+    rm -f /boot/lock
 done
 
 exec nsenter -t ${CONTAINER_PID} -m -p --wd="${PWD}" /usr/.bin/bash -- /boot/init_wsl2/isocon_sh.sh ${INIT_WSL_UID} "${@}"
